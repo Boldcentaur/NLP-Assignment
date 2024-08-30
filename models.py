@@ -49,15 +49,34 @@ class UnigramFeatureExtractor(FeatureExtractor):
         return counter
     
     def preprocessing(self, sentence: List[str]) -> List[str]:
-        return [word.lower() for word in sentence if word.lower() not in self.stop_words and word.isalpha()]
+        filtered_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
+        return [word.lower() for word in filtered_sentence if word.lower() not in self.stop_words]
 
 class BigramFeatureExtractor(FeatureExtractor):
     """
     Bigram feature extractor analogous to the unigram one.
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.stop_words = set(stopwords.words('english'))
 
+    def get_indexer(self):
+        return self.indexer
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        filtered_sentence = self.preprocessing(sentence)
+        bigram_sentence = self.combine_word(filtered_sentence)
+        counter = Counter(bigram_sentence)
+        for feature in counter.keys():
+            self.indexer.add_and_get_index(feature, add_to_indexer)
+        return counter
+    
+    def preprocessing(self, sentence: List[str]) -> List[str]:
+        filtered_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
+        return [word.lower() for word in filtered_sentence]
+
+    def combine_word(self, sentence: List[str]) -> List[str]:
+        return [sentence[i] + '|' + sentence[i+1] for i in range(len(sentence) - 1)]
 
 class BetterFeatureExtractor(FeatureExtractor):
     """
@@ -143,7 +162,7 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
 
     nltk.download('stopwords')
     learning_rate = 0.05
-    weight_vector = np.zeros(15000)
+    weight_vector = np.zeros(100000)
     num_epoch = 100
 
     for i in range(num_epoch):
@@ -177,9 +196,9 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     """
 
     nltk.download('stopwords')
-    learning_rate = 0.005
-    weight_vector = np.zeros(15000)
-    num_epoch = 7
+    learning_rate = 0.01
+    weight_vector = np.zeros(100000)
+    num_epoch = 35
     np.random.seed(2021)
     
     for i in range(num_epoch):
@@ -201,6 +220,7 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
                 for index in indices:
                     word = feat_extractor.get_indexer().get_object(index)
                     weight_vector[index] += (learning_rate * counter[word] * (1 - logistic(intermediate)))
+    # print(feat_extractor.get_indexer().objs_to_ints)
     return LogisticRegressionClassifier(weight_vector, feat_extractor)
 
 def logistic(number):
