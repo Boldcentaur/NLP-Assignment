@@ -3,7 +3,7 @@
 from sentiment_data import *
 from utils import *
 
-from collections import Counter
+from collections import Counter, defaultdict
 import numpy as np
 import nltk
 from nltk.corpus import stopwords
@@ -40,17 +40,20 @@ class UnigramFeatureExtractor(FeatureExtractor):
 
     def get_indexer(self):
         return self.indexer
+    
+    def word_occurance(self, train_exs):
+        return None
 
     def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
-        filtered_sentence = self.preprocessing(sentence)
-        counter = Counter(filtered_sentence)
+        preprocessed_sentence = self.preprocessing(sentence)
+        counter = Counter(preprocessed_sentence)
         for feature in counter.keys():
             self.indexer.add_and_get_index(feature, add_to_indexer)
         return counter
     
     def preprocessing(self, sentence: List[str]) -> List[str]:
-        filtered_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
-        return [word.lower() for word in filtered_sentence if word.lower() not in self.stop_words]
+        preprocessed_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
+        return [word.lower() for word in preprocessed_sentence if word.lower() not in self.stop_words and word]
 
 class BigramFeatureExtractor(FeatureExtractor):
     """
@@ -58,22 +61,24 @@ class BigramFeatureExtractor(FeatureExtractor):
     """
     def __init__(self, indexer: Indexer):
         self.indexer = indexer
-        self.stop_words = set(stopwords.words('english'))
 
     def get_indexer(self):
         return self.indexer
+    
+    def word_occurance(self, train_exs):
+        return None
 
     def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
-        filtered_sentence = self.preprocessing(sentence)
-        bigram_sentence = self.combine_word(filtered_sentence)
+        preprocessed_sentence = self.preprocessing(sentence)
+        bigram_sentence = self.combine_word(preprocessed_sentence)
         counter = Counter(bigram_sentence)
         for feature in counter.keys():
             self.indexer.add_and_get_index(feature, add_to_indexer)
         return counter
     
     def preprocessing(self, sentence: List[str]) -> List[str]:
-        filtered_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
-        return [word.lower() for word in filtered_sentence]
+        preprocessed_sentence = [''.join(filter(str.isalpha, word)) for word in sentence if word]
+        return [word.lower() for word in preprocessed_sentence]
 
     def combine_word(self, sentence: List[str]) -> List[str]:
         return [sentence[i] + '|' + sentence[i+1] for i in range(len(sentence) - 1)]
@@ -83,7 +88,39 @@ class BetterFeatureExtractor(FeatureExtractor):
     Better feature extractor...try whatever you can think of!
     """
     def __init__(self, indexer: Indexer):
-        raise Exception("Must be implemented")
+        self.indexer = indexer
+        self.total_training_documents = 0
+        self.word_count = defaultdict(int)
+
+    def get_indexer(self):
+        return self.indexer
+
+    def word_occurance(self, train_exs: List[SentimentExample]) -> None:
+        for train_ex in train_exs:
+            preprocessed_sentence = self.preprocessing(train_ex.words)
+            for word in set(preprocessed_sentence):
+                self.word_count[word] += 1
+            self.total_training_documents += 1
+
+    def extract_features(self, sentence: List[str], add_to_indexer: bool=False) -> Counter:
+        preprocessed_sentence = self.preprocessing(sentence)
+        counter = Counter(preprocessed_sentence)
+        tf_idf = {}
+        for word in set(preprocessed_sentence):
+            tf_score = counter[word] / len(preprocessed_sentence)
+            try:
+                idf_score = np.log(self.total_training_documents/self.word_count[word])
+            except:
+                idf_score = np.log(self.total_training_documents)
+            tf_idf[word] = tf_score * idf_score
+        for feature in tf_idf.keys():
+            self.indexer.add_and_get_index(feature, add_to_indexer)
+        return tf_idf
+
+    def preprocessing(self, sentence: List[str]) -> List[str]:
+        preprocessed_sentence = [''.join(filter(str.isalpha, word)) for word in sentence]
+        return [word.lower() for word in preprocessed_sentence if word]
+
 
 
 class SentimentClassifier(object):
@@ -151,7 +188,6 @@ class LogisticRegressionClassifier(SentimentClassifier):
             return 0
 
 
-
 def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureExtractor) -> PerceptronClassifier:
     """
     Train a classifier with the perceptron.
@@ -161,9 +197,10 @@ def train_perceptron(train_exs: List[SentimentExample], feat_extractor: FeatureE
     """
 
     nltk.download('stopwords')
-    learning_rate = 0.05
+    learning_rate = 0.1
     weight_vector = np.zeros(100000)
     num_epoch = 100
+    np.random.seed(2021)
 
     for i in range(num_epoch):
         permutation_list = np.random.permutation(len(train_exs))
@@ -197,10 +234,12 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
 
     nltk.download('stopwords')
     learning_rate = 0.01
-    weight_vector = np.zeros(100000)
+    weight_vector = np.zeros(200000)
     num_epoch = 35
     np.random.seed(2021)
-    
+
+    feat_extractor.word_occurance(train_exs)
+
     for i in range(num_epoch):
         permutation_list = np.random.permutation(len(train_exs))
         for j in permutation_list:
@@ -223,8 +262,10 @@ def train_logistic_regression(train_exs: List[SentimentExample], feat_extractor:
     # print(feat_extractor.get_indexer().objs_to_ints)
     return LogisticRegressionClassifier(weight_vector, feat_extractor)
 
+
 def logistic(number):
     return np.exp(number)/(1 + np.exp(number))
+
 
 def train_model(args, train_exs: List[SentimentExample], dev_exs: List[SentimentExample]) -> SentimentClassifier:
     """
